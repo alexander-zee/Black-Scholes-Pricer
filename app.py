@@ -286,7 +286,10 @@ def main() -> None:
     c1, c2 = st.columns(2, gap="large")
     for title, M, col in [("Call Price", call_M), ("Put Price", put_M)]:
         with (c1 if title.startswith("Call") else c2):
-            fig, ax = plt.subplots(figsize=(8.5, 6.5), dpi=120)
+            # Scale figure size dynamically to keep squares large
+            fig_width = hm_nK * 0.25   # 0.25 inches per column
+            fig_height = hm_nT * 0.25  # 0.25 inches per row
+            fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=120)
             im = ax.imshow(
                 M,
                 aspect="auto",
