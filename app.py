@@ -274,10 +274,19 @@ def main() -> None:
         hm_T_max = hm_T_min + 1e-4
 
     hm_strikes = np.linspace(K_min, K_max, hm_nK)
-    hm_mats = np.linspace(hm_T_min, hm_T_max, hm_nT)
+    hm_vols    = np.linspace(0.01, 1.0, hm_nT)   # Y-axis is volatility
 
-    call_M = compute_price_heatmap("call", S, r, sigma, q, hm_strikes, hm_mats)
-    put_M  = compute_price_heatmap("put",  S, r, sigma, q, hm_strikes, hm_mats)
+    # Build matrix manually because we vary volatility now
+    def compute_price_heatmap_vol(option_type, spot_price, strike_grid, vol_grid, T, r, q):
+        M = np.empty((len(vol_grid), len(strike_grid)), dtype=float)
+        for i, vol in enumerate(vol_grid):
+            for j, K in enumerate(strike_grid):
+                M[i, j] = black_scholes_price(option_type, spot_price, K, T, r, vol, q)
+        return M
+
+    call_M = compute_price_heatmap_vol("call", S, hm_strikes, hm_vols, T, r, q)
+    put_M  = compute_price_heatmap_vol("put",  S, hm_strikes, hm_vols, T, r, q)
+
 
 
 
@@ -319,7 +328,7 @@ def _plot_heatmap(title: str, M: np.ndarray, strikes: np.ndarray, mats: np.ndarr
         cmap="viridis"
     )
     ax.set_xlabel("Strike")
-    ax.set_ylabel("Maturity (years)")
+    ax.set_ylabel("Volatility")
     ax.set_title(title, fontweight="bold")
 
     # Ticks at data values (limited for readability)
