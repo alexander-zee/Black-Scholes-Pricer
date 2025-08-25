@@ -8,6 +8,7 @@ from scipy.stats import norm
 import matplotlib.pyplot as plt
 
 
+# ---------- Black–Scholes core ----------
 def compute_d1_d2(
     spot_price: float,
     strike_price: float,
@@ -16,16 +17,15 @@ def compute_d1_d2(
     volatility: float,
     dividend_yield: float = 0.0,
 ) -> Tuple[float, float]:
-    """Compute Black-Scholes d1 and d2 with continuous dividend yield."""
     if time_to_maturity_years <= 0 or volatility <= 0 or spot_price <= 0 or strike_price <= 0:
         return float("nan"), float("nan")
 
-    volatility_sqrt_time: float = volatility * math.sqrt(time_to_maturity_years)
-    numerator: float = math.log(spot_price / strike_price) + (
+    v_sqrt_t: float = volatility * math.sqrt(time_to_maturity_years)
+    num: float = math.log(spot_price / strike_price) + (
         (risk_free_rate - dividend_yield + 0.5 * volatility * volatility) * time_to_maturity_years
     )
-    d1: float = numerator / volatility_sqrt_time
-    d2: float = d1 - volatility_sqrt_time
+    d1: float = num / v_sqrt_t
+    d2: float = d1 - v_sqrt_t
     return d1, d2
 
 
@@ -38,32 +38,16 @@ def black_scholes_price(
     volatility: float,
     dividend_yield: float = 0.0,
 ) -> float:
-    """Price a European call or put using Black-Scholes with continuous dividend yield."""
-    option_type_lower: str = option_type.lower()
-
+    ot = option_type.lower()
     if time_to_maturity_years <= 0 or volatility <= 0:
-        # discounted intrinsic value fallback
         fwd_spot = spot_price * math.exp(-dividend_yield * time_to_maturity_years)
-        disc_strike = strike_price * math.exp(-risk_free_rate * time_to_maturity_years)
-        if option_type_lower == "call":
-            return max(fwd_spot - disc_strike, 0.0)
-        return max(disc_strike - fwd_spot, 0.0)
+        disc_k = strike_price * math.exp(-risk_free_rate * time_to_maturity_years)
+        return max(fwd_spot - disc_k, 0.0) if ot == "call" else max(disc_k - fwd_spot, 0.0)
 
-    d1, d2 = compute_d1_d2(
-        spot_price=spot_price,
-        strike_price=strike_price,
-        time_to_maturity_years=time_to_maturity_years,
-        risk_free_rate=risk_free_rate,
-        volatility=volatility,
-        dividend_yield=dividend_yield,
-    )
-
-    disc_spot: float = spot_price * math.exp(-dividend_yield * time_to_maturity_years)
-    disc_strike: float = strike_price * math.exp(-risk_free_rate * time_to_maturity_years)
-
-    if option_type_lower == "call":
-        return disc_spot * norm.cdf(d1) - disc_strike * norm.cdf(d2)
-    return disc_strike * norm.cdf(-d2) - disc_spot * norm.cdf(-d1)
+    d1, d2 = compute_d1_d2(spot_price, strike_price, time_to_maturity_years, risk_free_rate, volatility, dividend_yield)
+    disc_spot = spot_price * math.exp(-dividend_yield * time_to_maturity_years)
+    disc_k = strike_price * math.exp(-risk_free_rate * time_to_maturity_years)
+    return disc_spot * norm.cdf(d1) - disc_k * norm.cdf(d2) if ot == "call" else disc_k * norm.cdf(-d2) - disc_spot * norm.cdf(-d1)
 
 
 def compute_greeks(
@@ -75,48 +59,34 @@ def compute_greeks(
     volatility: float,
     dividend_yield: float = 0.0,
 ) -> Dict[str, float]:
-    """Compute Black-Scholes Greeks with continuous dividend yield."""
-    option_type_lower: str = option_type.lower()
-
     if time_to_maturity_years <= 0 or volatility <= 0 or spot_price <= 0 or strike_price <= 0:
         return {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0}
 
-    d1, d2 = compute_d1_d2(
-        spot_price=spot_price,
-        strike_price=strike_price,
-        time_to_maturity_years=time_to_maturity_years,
-        risk_free_rate=risk_free_rate,
-        volatility=volatility,
-        dividend_yield=dividend_yield,
-    )
-    disc_spot: float = spot_price * math.exp(-dividend_yield * time_to_maturity_years)
-    disc_strike: float = strike_price * math.exp(-risk_free_rate * time_to_maturity_years)
+    d1, d2 = compute_d1_d2(spot_price, strike_price, time_to_maturity_years, risk_free_rate, volatility, dividend_yield)
+    disc_spot = spot_price * math.exp(-dividend_yield * time_to_maturity_years)
+    disc_k = strike_price * math.exp(-risk_free_rate * time_to_maturity_years)
 
-    pdf_d1: float = norm.pdf(d1)
-    cdf_d1: float = norm.cdf(d1)
-    cdf_minus_d1: float = norm.cdf(-d1)
-    cdf_d2: float = norm.cdf(d2)
-    cdf_minus_d2: float = norm.cdf(-d2)
+    pdf_d1 = norm.pdf(d1)
+    cdf_d1 = norm.cdf(d1)
+    cdf_m_d1 = norm.cdf(-d1)
+    cdf_d2 = norm.cdf(d2)
+    cdf_m_d2 = norm.cdf(-d2)
 
-    gamma: float = (disc_spot * pdf_d1) / (spot_price * volatility * math.sqrt(time_to_maturity_years))
-    vega: float = disc_spot * pdf_d1 * math.sqrt(time_to_maturity_years)
+    gamma = (disc_spot * pdf_d1) / (spot_price * volatility * math.sqrt(time_to_maturity_years))
+    vega = disc_spot * pdf_d1 * math.sqrt(time_to_maturity_years)
 
-    if option_type_lower == "call":
-        delta: float = math.exp(-dividend_yield * time_to_maturity_years) * cdf_d1
-        theta: float = (
-            -(disc_spot * pdf_d1 * volatility) / (2.0 * math.sqrt(time_to_maturity_years))
-            - risk_free_rate * disc_strike * cdf_d2
-            + dividend_yield * disc_spot * cdf_d1
-        )
-        rho: float = strike_price * time_to_maturity_years * math.exp(-risk_free_rate * time_to_maturity_years) * cdf_d2
+    if option_type.lower() == "call":
+        delta = math.exp(-dividend_yield * time_to_maturity_years) * cdf_d1
+        theta = (-(disc_spot * pdf_d1 * volatility) / (2.0 * math.sqrt(time_to_maturity_years))
+                 - risk_free_rate * disc_k * cdf_d2
+                 + dividend_yield * disc_spot * cdf_d1)
+        rho = strike_price * time_to_maturity_years * math.exp(-risk_free_rate * time_to_maturity_years) * cdf_d2
     else:
         delta = math.exp(-dividend_yield * time_to_maturity_years) * (cdf_d1 - 1.0)
-        theta = (
-            -(disc_spot * pdf_d1 * volatility) / (2.0 * math.sqrt(time_to_maturity_years))
-            + risk_free_rate * disc_strike * cdf_minus_d2
-            - dividend_yield * disc_spot * cdf_minus_d1
-        )
-        rho = -strike_price * time_to_maturity_years * math.exp(-risk_free_rate * time_to_maturity_years) * cdf_minus_d2
+        theta = (-(disc_spot * pdf_d1 * volatility) / (2.0 * math.sqrt(time_to_maturity_years))
+                 + risk_free_rate * disc_k * cdf_m_d2
+                 - dividend_yield * disc_spot * cdf_m_d1)
+        rho = -strike_price * time_to_maturity_years * math.exp(-risk_free_rate * time_to_maturity_years) * cdf_m_d2
 
     return {"delta": float(delta), "gamma": float(gamma), "vega": float(vega), "theta": float(theta), "rho": float(rho)}
 
@@ -132,43 +102,28 @@ def implied_volatility_from_price(
     initial_lower_vol: float = 1e-6,
     initial_upper_vol: float = 5.0,
 ) -> float:
-    """Compute implied volatility using a robust bracketing approach."""
     if target_option_price <= 0:
-        raise ValueError("Target option price must be positive for implied volatility.")
+        raise ValueError("Target option price must be positive.")
     if time_to_maturity_years <= 0 or spot_price <= 0 or strike_price <= 0:
-        raise ValueError("Invalid inputs for implied volatility calculation.")
+        raise ValueError("Invalid inputs for IV.")
 
-    option_type_lower: str = option_type.lower()
+    ot = option_type.lower()
 
-    def price_diff(vol: float) -> float:
-        price: float = black_scholes_price(
-            option_type=option_type_lower,
-            spot_price=spot_price,
-            strike_price=strike_price,
-            time_to_maturity_years=time_to_maturity_years,
-            risk_free_rate=risk_free_rate,
-            volatility=vol,
-            dividend_yield=dividend_yield,
-        )
-        return price - target_option_price
+    def f(vol: float) -> float:
+        return black_scholes_price(ot, spot_price, strike_price, time_to_maturity_years, risk_free_rate, vol, dividend_yield) - target_option_price
 
-    lower_vol: float = initial_lower_vol
-    upper_vol: float = initial_upper_vol
-
-    lower_value: float = price_diff(lower_vol)
-    upper_value: float = price_diff(upper_vol)
-
-    ceiling_vol: float = 10.0
-    while lower_value * upper_value > 0 and upper_vol < ceiling_vol:
-        upper_vol *= 1.5
-        upper_value = price_diff(upper_vol)
-
-    if lower_value * upper_value > 0:
-        raise ValueError("Unable to bracket implied volatility with the provided target price.")
-
-    return float(brentq(price_diff, a=lower_vol, b=upper_vol, maxiter=100, xtol=1e-10))
+    lo, hi = initial_lower_vol, initial_upper_vol
+    f_lo, f_hi = f(lo), f(hi)
+    ceiling = 10.0
+    while f_lo * f_hi > 0 and hi < ceiling:
+        hi *= 1.5
+        f_hi = f(hi)
+    if f_lo * f_hi > 0:
+        raise ValueError("Unable to bracket implied vol.")
+    return float(brentq(f, a=lo, b=hi, maxiter=100, xtol=1e-10))
 
 
+# ---------- helpers ----------
 def compute_price_curve_vs_strike(
     option_type: str,
     spot_price: float,
@@ -180,22 +135,11 @@ def compute_price_curve_vs_strike(
     max_strike: float,
     num_points: int = 100,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Compute arrays of strikes and corresponding option prices for plotting."""
-    strikes: np.ndarray = np.linspace(min_strike, max_strike, num_points)
-    prices: np.ndarray = np.array(
-        [
-            black_scholes_price(
-                option_type=option_type,
-                spot_price=spot_price,
-                strike_price=float(k),
-                time_to_maturity_years=time_to_maturity_years,
-                risk_free_rate=risk_free_rate,
-                volatility=volatility,
-                dividend_yield=dividend_yield,
-            )
-            for k in strikes
-        ]
-    )
+    strikes = np.linspace(min_strike, max_strike, num_points)
+    prices = np.array([
+        black_scholes_price(option_type, spot_price, float(k), time_to_maturity_years, risk_free_rate, volatility, dividend_yield)
+        for k in strikes
+    ])
     return strikes, prices
 
 
@@ -208,220 +152,162 @@ def compute_price_heatmap(
     strikes: np.ndarray,
     maturities: np.ndarray,
 ) -> np.ndarray:
-    """
-    Return a matrix M of shape (len(maturities), len(strikes)),
-    where M[i,j] = option price at T=maturities[i], K=strikes[j].
-    """
     M = np.empty((len(maturities), len(strikes)), dtype=float)
     for i, T in enumerate(maturities):
         for j, K in enumerate(strikes):
-            M[i, j] = black_scholes_price(
-                option_type=option_type,
-                spot_price=spot_price,
-                strike_price=float(K),
-                time_to_maturity_years=float(T),
-                risk_free_rate=risk_free_rate,
-                volatility=volatility,
-                dividend_yield=dividend_yield,
-            )
+            M[i, j] = black_scholes_price(option_type, spot_price, float(K), float(T), risk_free_rate, volatility, dividend_yield)
     return M
+
+
+def add_cell_numbers(ax, data: np.ndarray, xmin: float, xmax: float, ymin: float, ymax: float,
+                     fmt: str = ".2f", fontsize: int = 9) -> None:
+    """
+    Annotate each heatmap cell with its value.
+    Works with imshow(extent=[xmin, xmax, ymin, ymax]).
+    """
+    nrows, ncols = data.shape
+    dx = (xmax - xmin) / ncols
+    dy = (ymax - ymin) / nrows
+    x_centers = xmin + dx * (np.arange(ncols) + 0.5)
+    y_centers = ymin + dy * (np.arange(nrows) + 0.5)
+
+    # Choose white/black text for contrast
+    thresh = 0.5 * (np.nanmax(data) + np.nanmin(data))
+
+    for i, y in enumerate(y_centers):
+        for j, x in enumerate(x_centers):
+            val = data[i, j]
+            ax.text(
+                x, y, format(val, fmt),
+                ha="center", va="center",
+                fontsize=fontsize,
+                color=("white" if val >= thresh else "black"),
+            )
 
 
 def format_percent(x: float) -> str:
     return f"{x * 100:.4f}%"
 
 
+# ---------- Streamlit UI ----------
 def main() -> None:
     st.set_page_config(page_title="Black-Scholes Pricer (q-dividend)", layout="wide")
-    st.title("European Option Pricer – Black-Scholes with Dividend Yield")
-    st.caption("Prices European calls/puts, shows Greeks, plots price vs strike, IV, and heatmaps.")
+    st.title("European Option Pricer – Black–Scholes with Dividend Yield")
+    st.caption("Prices European calls/puts, shows Greeks, curve, IV, and **numbered heatmaps**.")
 
     with st.sidebar:
         st.header("Inputs")
-        spot_price: float = st.number_input("Spot price S", min_value=0.0, value=100.0, step=0.1, format="%.6f")
-        strike_price: float = st.number_input("Strike price K", min_value=0.0, value=100.0, step=0.1, format="%.6f")
-        time_to_maturity_years: float = st.number_input(
-            "Time to maturity T (years)", min_value=0.0, value=1.0, step=0.01, format="%.6f"
-        )
-        risk_free_rate: float = st.number_input(
-            "Risk-free rate r (decimal)", min_value=-1.0, value=0.05, step=0.001, format="%.6f"
-        )
-        dividend_yield: float = st.number_input(
-            "Dividend yield q (decimal)", min_value=0.0, value=0.0, step=0.001, format="%.6f"
-        )
-        volatility: float = st.number_input(
-            "Volatility sigma (decimal)", min_value=0.0, value=0.2, step=0.001, format="%.6f"
-        )
-        option_type: str = st.radio("Option type", ["Call", "Put"], index=0, horizontal=True)
+        S = st.number_input("Spot price S", min_value=0.0, value=100.0, step=0.1, format="%.6f")
+        K0 = st.number_input("Strike price K (for single-price/Greeks)", min_value=0.0, value=100.0, step=0.1, format="%.6f")
+        T = st.number_input("Time to maturity T (years)", min_value=0.0, value=1.0, step=0.01, format="%.6f")
+        r = st.number_input("Risk-free rate r (decimal)", min_value=-1.0, value=0.05, step=0.001, format="%.6f")
+        q = st.number_input("Dividend yield q (decimal)", min_value=0.0, value=0.0, step=0.001, format="%.6f")
+        sigma = st.number_input("Volatility σ (decimal)", min_value=0.0, value=0.2, step=0.001, format="%.6f")
+        opt_type = st.radio("Option type (for curve/IV/Greeks)", ["Call", "Put"], index=0, horizontal=True)
 
         st.subheader("Implied Volatility")
-        market_price: float = st.number_input(
-            "Market option price (same type)", min_value=0.0, value=0.0, step=0.01, format="%.6f"
-        )
+        mkt_px = st.number_input("Market option price", min_value=0.0, value=0.0, step=0.01, format="%.6f")
 
-        st.subheader("Plot Settings (Curve)")
-        strike_range_low_mult: float = st.slider("Min strike multiplier", 0.1, 1.0, 0.5, 0.05)
-        strike_range_high_mult: float = st.slider("Max strike multiplier", 1.0, 3.0, 1.5, 0.05)
-        num_points: int = st.slider("Points on curve", 20, 400, 150, 10)
+        st.subheader("Curve Settings")
+        k_low_mult = st.slider("Min strike multiplier", 0.1, 1.0, 0.5, 0.05)
+        k_high_mult = st.slider("Max strike multiplier", 1.0, 3.0, 1.5, 0.05)
+        n_curve = st.slider("Points on curve", 20, 400, 150, 10)
 
         st.subheader("Heatmap Settings")
-        hm_strike_low_mult: float = st.slider("Heatmap: min strike × spot", 0.1, 1.0, 0.5, 0.05)
-        hm_strike_high_mult: float = st.slider("Heatmap: max strike × spot", 1.0, 3.0, 2.0, 0.05)
-        hm_T_min: float = st.number_input("Heatmap: min T (years)", min_value=0.0, value=0.05, step=0.01, format="%.4f")
-        hm_T_max: float = st.number_input("Heatmap: max T (years)", min_value=0.001, value=2.0, step=0.01, format="%.4f")
-        hm_nK: int = st.slider("Heatmap: # strike points", 20, 300, 120, 10)
-        hm_nT: int = st.slider("Heatmap: # maturity points", 20, 300, 120, 10)
+        # ↓ fewer points -> bigger squares
+        hm_nK = st.slider("Heatmap: # strike points (columns)", 10, 120, 30, 5)
+        hm_nT = st.slider("Heatmap: # maturity points (rows)", 10, 120, 30, 5)
+        hm_K_low = st.slider("Heatmap: min strike × spot", 0.1, 1.0, 0.5, 0.05)
+        hm_K_high = st.slider("Heatmap: max strike × spot", 1.0, 3.0, 2.0, 0.05)
+        hm_T_min = st.number_input("Heatmap: min T (years)", min_value=0.0, value=0.05, step=0.01, format="%.4f")
+        hm_T_max = st.number_input("Heatmap: max T (years)", min_value=0.001, value=2.0, step=0.01, format="%.4f")
 
-    col_left, col_right = st.columns(2)
+        st.subheader("Cell Numbers")
+        annotate = st.checkbox("Show numbers in cells", value=True)
+        decimals = st.slider("Decimals in cells", 0, 4, 2, 1)
+        cell_font = st.slider("Cell font size", 6, 20, 11, 1)
+        max_cells = st.slider("Max cells to annotate (perf cap)", 100, 4000, 1600, 100)
 
-    with col_left:
+    # --- Left column: single prices & Greeks ---
+    left, right = st.columns(2)
+    with left:
         st.subheader("Theoretical Prices")
-        call_price: float = black_scholes_price(
-            option_type="call",
-            spot_price=spot_price,
-            strike_price=strike_price,
-            time_to_maturity_years=time_to_maturity_years,
-            risk_free_rate=risk_free_rate,
-            volatility=volatility,
-            dividend_yield=dividend_yield,
-        )
-        put_price: float = black_scholes_price(
-            option_type="put",
-            spot_price=spot_price,
-            strike_price=strike_price,
-            time_to_maturity_years=time_to_maturity_years,
-            risk_free_rate=risk_free_rate,
-            volatility=volatility,
-            dividend_yield=dividend_yield,
-        )
-        st.metric("Call price", f"{call_price:.6f}")
-        st.metric("Put price", f"{put_price:.6f}")
+        c_px = black_scholes_price("call", S, K0, T, r, sigma, q)
+        p_px = black_scholes_price("put",  S, K0, T, r, sigma, q)
+        st.metric("Call price", f"{c_px:.6f}")
+        st.metric("Put price",  f"{p_px:.6f}")
 
         st.divider()
         st.subheader("Greeks (selected type)")
-        greeks: Dict[str, float] = compute_greeks(
-            option_type=option_type,
-            spot_price=spot_price,
-            strike_price=strike_price,
-            time_to_maturity_years=time_to_maturity_years,
-            risk_free_rate=risk_free_rate,
-            volatility=volatility,
-            dividend_yield=dividend_yield,
-        )
-        st.write(
-            {
-                "Delta": round(greeks["delta"], 6),
-                "Gamma": round(greeks["gamma"], 6),
-                "Vega (per 1.0 vol)": round(greeks["vega"], 6),
-                "Theta (per year)": round(greeks["theta"], 6),
-                "Rho (per 1.0 rate)": round(greeks["rho"], 6),
-            }
-        )
+        greeks = compute_greeks(opt_type, S, K0, T, r, sigma, q)
+        st.write({k.capitalize(): round(v, 6) for k, v in greeks.items()})
 
-    with col_right:
+    # --- Right column: curve & IV ---
+    with right:
         st.subheader("Price vs Strike")
-        min_strike: float = max(1e-8, strike_price * strike_range_low_mult)
-        max_strike: float = max(min_strike * 1.0001, strike_price * strike_range_high_mult)
-        strikes, prices = compute_price_curve_vs_strike(
-            option_type=option_type,
-            spot_price=spot_price,
-            time_to_maturity_years=time_to_maturity_years,
-            risk_free_rate=risk_free_rate,
-            volatility=volatility,
-            dividend_yield=dividend_yield,
-            min_strike=min_strike,
-            max_strike=max_strike,
-            num_points=num_points,
-        )
+        k_min = max(1e-8, K0 * k_low_mult)
+        k_max = max(k_min * 1.0001, K0 * k_high_mult)
+        strikes, prices = compute_price_curve_vs_strike(opt_type, S, T, r, sigma, q, k_min, k_max, n_curve)
         st.line_chart({"strike": strikes, "price": prices}, x="strike", y="price")
 
         st.divider()
         st.subheader("Implied Volatility (from market price)")
-        if market_price > 0:
+        if mkt_px > 0:
             try:
-                implied_vol: float = implied_volatility_from_price(
-                    target_option_price=market_price,
-                    option_type=option_type,
-                    spot_price=spot_price,
-                    strike_price=strike_price,
-                    time_to_maturity_years=time_to_maturity_years,
-                    risk_free_rate=risk_free_rate,
-                    dividend_yield=dividend_yield,
-                )
-                st.metric("Implied volatility (decimal)", f"{implied_vol:.6f}")
-                st.caption(f"That is {format_percent(implied_vol)}")
-            except Exception as exc:
-                st.error(f"Implied volatility could not be computed: {exc}")
+                iv = implied_volatility_from_price(mkt_px, opt_type, S, K0, T, r, q)
+                st.metric("Implied vol (decimal)", f"{iv:.6f}")
+                st.caption(f"That is {format_percent(iv)}")
+            except Exception as e:
+                st.error(f"IV could not be computed: {e}")
         else:
-            st.info("Enter a positive market price (sidebar) to compute implied volatility.")
+            st.info("Enter a positive market price to compute IV.")
 
+    # --- Heatmaps ---
     st.divider()
     st.subheader("Heatmaps: Price vs Strike & Maturity")
 
-    # Build grids for heatmaps (strike × maturity)
-    hm_K_min = max(1e-8, spot_price * hm_strike_low_mult)
-    hm_K_max = max(hm_K_min * 1.0001, spot_price * hm_strike_high_mult)
+    # build grids
+    K_min = max(1e-8, S * hm_K_low)
+    K_max = max(K_min * 1.0001, S * hm_K_high)
     if hm_T_max <= hm_T_min:
+        st.warning("Max T must be greater than Min T. Adjusted automatically.")
         hm_T_max = hm_T_min + 1e-4
 
-    hm_strikes = np.linspace(hm_K_min, hm_K_max, hm_nK)
-    hm_maturities = np.linspace(hm_T_min, hm_T_max, hm_nT)
+    hm_strikes = np.linspace(K_min, K_max, hm_nK)
+    hm_mats = np.linspace(hm_T_min, hm_T_max, hm_nT)
 
-    call_matrix = compute_price_heatmap(
-        option_type="call",
-        spot_price=spot_price,
-        risk_free_rate=risk_free_rate,
-        volatility=volatility,
-        dividend_yield=dividend_yield,
-        strikes=hm_strikes,
-        maturities=hm_maturities,
-    )
-    put_matrix = compute_price_heatmap(
-        option_type="put",
-        spot_price=spot_price,
-        risk_free_rate=risk_free_rate,
-        volatility=volatility,
-        dividend_yield=dividend_yield,
-        strikes=hm_strikes,
-        maturities=hm_maturities,
-    )
+    call_M = compute_price_heatmap("call", S, r, sigma, q, hm_strikes, hm_mats)
+    put_M  = compute_price_heatmap("put",  S, r, sigma, q, hm_strikes, hm_mats)
 
-    # Show the two heatmaps side-by-side
-    hcol1, hcol2 = st.columns(2, gap="large")
-    with hcol1:
-        st.markdown("**Call Price Heatmap**")
-        fig1, ax1 = plt.subplots(figsize=(6.5, 4.8))
-        im1 = ax1.imshow(
-            call_matrix,
-            aspect="auto",
-            origin="lower",
-            extent=[hm_strikes.min(), hm_strikes.max(), hm_maturities.min(), hm_maturities.max()],
-        )
-        ax1.set_xlabel("Strike")
-        ax1.set_ylabel("Maturity (years)")
-        ax1.set_title("Call Price")
-        cbar1 = fig1.colorbar(im1, ax=ax1)
-        cbar1.set_label("Price")
-        st.pyplot(fig1)
+    # plotting helper (bigger figure -> bigger squares)
+    fmt_str = f".{decimals}f"
+    annotate_ok = annotate and (hm_nK * hm_nT <= max_cells)
 
-    with hcol2:
-        st.markdown("**Put Price Heatmap**")
-        fig2, ax2 = plt.subplots(figsize=(6.5, 4.8))
-        im2 = ax2.imshow(
-            put_matrix,
-            aspect="auto",
-            origin="lower",
-            extent=[hm_strikes.min(), hm_strikes.max(), hm_maturities.min(), hm_maturities.max()],
-        )
-        ax2.set_xlabel("Strike")
-        ax2.set_ylabel("Maturity (years)")
-        ax2.set_title("Put Price")
-        cbar2 = fig2.colorbar(im2, ax=ax2)
-        cbar2.set_label("Price")
-        st.pyplot(fig2)
+    c1, c2 = st.columns(2, gap="large")
+    for title, M, col in [("Call Price", call_M), ("Put Price", put_M)]:
+        with (c1 if title.startswith("Call") else c2):
+            fig, ax = plt.subplots(figsize=(8.5, 6.5), dpi=120)
+            im = ax.imshow(
+                M,
+                aspect="auto",
+                origin="lower",
+                extent=[hm_strikes.min(), hm_strikes.max(), hm_mats.min(), hm_mats.max()],
+                interpolation="nearest",  # crisper squares
+            )
+            ax.set_xlabel("Strike")
+            ax.set_ylabel("Maturity (years)")
+            ax.set_title(title)
+            cbar = fig.colorbar(im, ax=ax)
+            cbar.set_label("Price")
 
-    st.divider()
-    st.caption("Notes: Heatmaps display *theoretical* Black–Scholes prices as a function of strike and maturity for the inputs above.")
+            if annotate_ok:
+                add_cell_numbers(ax, M, hm_strikes.min(), hm_strikes.max(), hm_mats.min(), hm_mats.max(), fmt=fmt_str, fontsize=cell_font)
+            elif annotate and not annotate_ok:
+                st.caption(f"⚠️ Not annotating: {hm_nK*hm_nT} cells > cap {max_cells}. Lower #points or raise cap.")
+
+            st.pyplot(fig)
+
+    st.caption("Tip: reduce the heatmap #points to make each square larger. Use the cell font size & decimals to tweak readability.")
 
 
 if __name__ == "__main__":
