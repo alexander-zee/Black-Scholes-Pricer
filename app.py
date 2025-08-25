@@ -279,38 +279,86 @@ def main() -> None:
     call_M = compute_price_heatmap("call", S, r, sigma, q, hm_strikes, hm_mats)
     put_M  = compute_price_heatmap("put",  S, r, sigma, q, hm_strikes, hm_mats)
 
-    # plotting helper (bigger figure -> bigger squares)
-    fmt_str = f".{decimals}f"
-    annotate_ok = annotate and (hm_nK * hm_nT <= max_cells)
 
-    c1, c2 = st.columns(2, gap="large")
-    for title, M, col in [("Call Price", call_M), ("Put Price", put_M)]:
-        with (c1 if title.startswith("Call") else c2):
-            # Scale figure size dynamically to keep squares large
-            fig_width = hm_nK * 0.25   # 0.25 inches per column
-            fig_height = hm_nT * 0.25  # 0.25 inches per row
-            fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=120)
-            im = ax.imshow(
-                M,
-                aspect="auto",
-                origin="lower",
-                extent=[hm_strikes.min(), hm_strikes.max(), hm_mats.min(), hm_mats.max()],
-                interpolation="nearest",  # crisper squares
-            )
-            ax.set_xlabel("Strike")
-            ax.set_ylabel("Maturity (years)")
-            ax.set_title(title)
-            cbar = fig.colorbar(im, ax=ax)
-            cbar.set_label("Price")
 
-            if annotate_ok:
-                add_cell_numbers(ax, M, hm_strikes.min(), hm_strikes.max(), hm_mats.min(), hm_mats.max(), fmt=fmt_str, fontsize=cell_font)
-            elif annotate and not annotate_ok:
-                st.caption(f"⚠️ Not annotating: {hm_nK*hm_nT} cells > cap {max_cells}. Lower #points or raise cap.")
 
-            st.pyplot(fig)
 
-    st.caption("Tip: reduce the heatmap #points to make each square larger. Use the cell font size & decimals to tweak readability.")
+
+
+    # ---------- prettier, bigger heatmap helpers (REPLACEMENT) ----------
+def _centers_to_edges(a: np.ndarray) -> np.ndarray:
+    """Convert a 1D array of centers to edges for pcolormesh."""
+    if a.size == 1:
+        step = 1.0
+        return np.array([a[0] - 0.5*step, a[0] + 0.5*step])
+    mids = (a[:-1] + a[1:]) / 2.0
+    first = a[0] - (mids[0] - a[0])
+    last  = a[-1] + (a[-1] - mids[-1])
+    return np.concatenate(([first], mids, [last]))
+
+def _auto_figsize(ncols: int, nrows: int, cell_in=0.45, max_w=12, max_h=10):
+    """Keep ~cell_in inches per cell, with sensible caps."""
+    w = ncols * cell_in
+    h = nrows * cell_in
+    scale = min(max_w / max(w, 1e-9), max_h / max(h, 1e-9), 1.0)
+    return max(w*scale, 4), max(h*scale, 3.5)
+
+def _plot_heatmap(title: str, M: np.ndarray, strikes: np.ndarray, mats: np.ndarray, container):
+    nrows, ncols = M.shape
+    K_edges = _centers_to_edges(strikes)
+    T_edges = _centers_to_edges(mats)
+    K_grid, T_grid = np.meshgrid(K_edges, T_edges)
+
+    fig_w, fig_h = _auto_figsize(ncols, nrows)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=120)
+
+    im = ax.pcolormesh(
+        K_grid, T_grid, M,
+        shading="auto",
+        edgecolors="white", linewidth=0.7,   # crisp square borders
+        cmap="viridis"
+    )
+    ax.set_xlabel("Strike")
+    ax.set_ylabel("Maturity (years)")
+    ax.set_title(title, fontweight="bold")
+
+    # Ticks at data values (limited for readability)
+    max_ticks = 10
+    xt_idx = np.linspace(0, ncols-1, min(ncols, max_ticks), dtype=int)
+    yt_idx = np.linspace(0, nrows-1, min(nrows, max_ticks), dtype=int)
+    ax.set_xticks(strikes[xt_idx])
+    ax.set_yticks(mats[yt_idx])
+
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Price")
+
+    if annotate and (nrows*ncols <= max_cells):
+        thresh = 0.5 * (np.nanmax(M) + np.nanmin(M))
+        x_centers = (K_edges[:-1] + K_edges[1:]) / 2.0
+        y_centers = (T_edges[:-1] + T_edges[1:]) / 2.0
+        for i, y in enumerate(y_centers):
+            for j, x in enumerate(x_centers):
+                v = M[i, j]
+                ax.text(
+                    x, y, format(v, f".{decimals}f"),
+                    ha="center", va="center",
+                    fontsize=cell_font,
+                    color=("white" if v >= thresh else "black"),
+                )
+    elif annotate and (nrows*ncols > max_cells):
+        st.caption(f"⚠️ Not annotating: {nrows*ncols} cells > cap {max_cells}. Lower #points or raise cap.")
+
+    container.pyplot(fig)
+
+# ---------- render the two heatmaps ----------
+c1, c2 = st.columns(2, gap="large")
+_plot_heatmap("Call Price Heatmap", call_M, hm_strikes, hm_mats, c1)
+_plot_heatmap("Put Price Heatmap",  put_M,  hm_strikes, hm_mats, c2)
+
+
+
+
+
 
 
 if __name__ == "__main__":
