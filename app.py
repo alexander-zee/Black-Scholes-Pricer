@@ -5,11 +5,7 @@ import numpy as np
 import streamlit as st
 from scipy.optimize import brentq
 from scipy.stats import norm
-
-import matplotlib
-matplotlib.use("Agg")  # must come before importing pyplot
 import matplotlib.pyplot as plt
-
 
 
 def compute_d1_d2(
@@ -271,18 +267,10 @@ def main() -> None:
         st.subheader("Heatmap Settings")
         hm_strike_low_mult: float = st.slider("Heatmap: min strike × spot", 0.1, 1.0, 0.5, 0.05)
         hm_strike_high_mult: float = st.slider("Heatmap: max strike × spot", 1.0, 3.0, 2.0, 0.05)
-        hm_vol_min: float = st.number_input("Heatmap: min volatility (decimal)", min_value=0.001, value=0.05, step=0.01, format="%.4f")
-        hm_vol_max: float = st.number_input("Heatmap: max volatility (decimal)", min_value=0.01, value=1.0, step=0.01, format="%.4f")
+        hm_T_min: float = st.number_input("Heatmap: min T (years)", min_value=0.0, value=0.05, step=0.01, format="%.4f")
+        hm_T_max: float = st.number_input("Heatmap: max T (years)", min_value=0.001, value=2.0, step=0.01, format="%.4f")
         hm_nK: int = st.slider("Heatmap: # strike points", 20, 300, 120, 10)
-        hm_nV: int = st.slider("Heatmap: # volatility points", 20, 300, 120, 10)
-
-        st.subheader("Cell Numbers")
-        annotate: bool = st.checkbox("Show numbers in cells", value=True)
-        decimals: int = st.slider("Decimals in cells", 0, 4, 2, 1)
-        cell_font: int = 9   # fixed font size
-
-
-
+        hm_nT: int = st.slider("Heatmap: # maturity points", 20, 300, 120, 10)
 
     col_left, col_right = st.columns(2)
 
@@ -367,90 +355,73 @@ def main() -> None:
         else:
             st.info("Enter a positive market price (sidebar) to compute implied volatility.")
 
-    # --- Heatmaps ---
     st.divider()
-    st.subheader("Heatmap: 10×10 Price vs Strike & Volatility")
+    st.subheader("Heatmaps: Price vs Strike & Maturity")
 
-    # Fixed 10×10 grid
-    hm_nK, hm_nV = 10, 10
+    # Build grids for heatmaps (strike × maturity)
+    hm_K_min = max(1e-8, spot_price * hm_strike_low_mult)
+    hm_K_max = max(hm_K_min * 1.0001, spot_price * hm_strike_high_mult)
+    if hm_T_max <= hm_T_min:
+        hm_T_max = hm_T_min + 1e-4
 
-    K_min = max(1e-8, spot_price * hm_strike_low_mult)
-    K_max = max(K_min * 1.0001, spot_price * hm_strike_high_mult)
+    hm_strikes = np.linspace(hm_K_min, hm_K_max, hm_nK)
+    hm_maturities = np.linspace(hm_T_min, hm_T_max, hm_nT)
 
-    hm_strikes = np.linspace(K_min, K_max, hm_nK)
-    hm_vols    = np.linspace(hm_vol_min, hm_vol_max, hm_nV)  # y-axis is volatility
+    call_matrix = compute_price_heatmap(
+        option_type="call",
+        spot_price=spot_price,
+        risk_free_rate=risk_free_rate,
+        volatility=volatility,
+        dividend_yield=dividend_yield,
+        strikes=hm_strikes,
+        maturities=hm_maturities,
+    )
+    put_matrix = compute_price_heatmap(
+        option_type="put",
+        spot_price=spot_price,
+        risk_free_rate=risk_free_rate,
+        volatility=volatility,
+        dividend_yield=dividend_yield,
+        strikes=hm_strikes,
+        maturities=hm_maturities,
+    )
 
-    def compute_price_heatmap_vol(option_type, spot_price, strike_grid, vol_grid, T, r, q):
-        M = np.empty((len(vol_grid), len(strike_grid)), dtype=float)
-        for i, vol in enumerate(vol_grid):
-            for j, K in enumerate(strike_grid):
-                M[i, j] = black_scholes_price(
-                    option_type=option_type,
-                    spot_price=spot_price,
-                    strike_price=float(K),
-                    time_to_maturity_years=T,
-                    risk_free_rate=r,
-                    volatility=vol,
-                    dividend_yield=q,
-                )
-        return M
+    # Show the two heatmaps side-by-side
+    hcol1, hcol2 = st.columns(2, gap="large")
+    with hcol1:
+        st.markdown("**Call Price Heatmap**")
+        fig1, ax1 = plt.subplots(figsize=(6.5, 4.8))
+        im1 = ax1.imshow(
+            call_matrix,
+            aspect="auto",
+            origin="lower",
+            extent=[hm_strikes.min(), hm_strikes.max(), hm_maturities.min(), hm_maturities.max()],
+        )
+        ax1.set_xlabel("Strike")
+        ax1.set_ylabel("Maturity (years)")
+        ax1.set_title("Call Price")
+        cbar1 = fig1.colorbar(im1, ax=ax1)
+        cbar1.set_label("Price")
+        st.pyplot(fig1)
 
-    call_M = compute_price_heatmap_vol("call", spot_price, hm_strikes, hm_vols, time_to_maturity_years, risk_free_rate, dividend_yield)
-    put_M  = compute_price_heatmap_vol("put",  spot_price, hm_strikes, hm_vols, time_to_maturity_years, risk_free_rate, dividend_yield)
+    with hcol2:
+        st.markdown("**Put Price Heatmap**")
+        fig2, ax2 = plt.subplots(figsize=(6.5, 4.8))
+        im2 = ax2.imshow(
+            put_matrix,
+            aspect="auto",
+            origin="lower",
+            extent=[hm_strikes.min(), hm_strikes.max(), hm_maturities.min(), hm_maturities.max()],
+        )
+        ax2.set_xlabel("Strike")
+        ax2.set_ylabel("Maturity (years)")
+        ax2.set_title("Put Price")
+        cbar2 = fig2.colorbar(im2, ax=ax2)
+        cbar2.set_label("Price")
+        st.pyplot(fig2)
 
-    def draw_square_heatmap(title, M, xvals, yvals, container):
-        fig, ax = plt.subplots(figsize=(8, 8), dpi=120)  # square figure
-        im = ax.imshow(M, origin="lower", 
-                       aspect="equal", 
-                       interpolation="nearest",
-                       cmap="RdYlGn",
-                       )
-
-        ax.set_xticks(range(len(xvals)))
-        ax.set_yticks(range(len(yvals)))
-        ax.set_xticklabels([f"{x:.2f}" for x in xvals])
-        ax.set_yticklabels([f"{y:.0%}" for y in yvals])
-
-        ax.set_xlabel("Strike")
-        ax.set_ylabel("Volatility")
-        ax.set_title(title, fontweight="bold")
-
-        # Draw gridlines between squares
-        ax.set_xticks(np.arange(-0.5, len(xvals), 1), minor=True)
-        ax.set_yticks(np.arange(-0.5, len(yvals), 1), minor=True)
-        ax.grid(which="minor", color="white", linestyle="-", linewidth=1.2)
-        ax.tick_params(which="minor", bottom=False, left=False)
-
-        cbar = fig.colorbar(im, ax=ax)
-        cbar.set_label("Price")
-
-        # Annotate numbers
-        if annotate:
-            thresh = 0.5 * (np.nanmax(M) + np.nanmin(M))
-            for i in range(len(yvals)):
-                for j in range(len(xvals)):
-                    v = M[i, j]
-                    ax.text(j, i, f"{v:.{decimals}f}",
-                            ha="center", va="center",
-                            fontsize=cell_font,
-                            color=("black" if v >= thresh else "white"))
-
-        container.pyplot(fig)
-        plt.close(fig)
-
-    # Render side by side
-    c1, c2 = st.columns(2)
-    draw_square_heatmap("Call Price Heatmap", call_M, hm_strikes, hm_vols, c1)
-    draw_square_heatmap("Put Price Heatmap",  put_M, hm_strikes, hm_vols, c2)
-
-
-
-
-
-
-
-
-
+    st.divider()
+    st.caption("Notes: Heatmaps display *theoretical* Black–Scholes prices as a function of strike and maturity for the inputs above.")
 
 
 if __name__ == "__main__":
