@@ -5,7 +5,11 @@ import numpy as np
 import streamlit as st
 from scipy.optimize import brentq
 from scipy.stats import norm
+
+import matplotlib
+matplotlib.use("Agg")  # must come before importing pyplot
 import matplotlib.pyplot as plt
+
 
 
 def compute_d1_d2(
